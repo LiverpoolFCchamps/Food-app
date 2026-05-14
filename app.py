@@ -1,11 +1,4 @@
-и според Вашето здраве**")
-
-# ====================== БАЗА ДАННИ ======================
-harmful_dict = {
-    "E250": "Натриев нитрит", 
-    "E251": "Натриев нитрат",
-    "E621": "Мононатриев глутамат (MSG)",
-    "E407": "Карагенан", import streamlit as st
+import streamlit as st
 from PIL import Image, ImageEnhance
 import easyocr
 import numpy as np
@@ -19,7 +12,14 @@ st.set_page_config(
 )
 
 st.title("🥗 AI Сканер на Етикети")
-st.markdown("**Качете снимка → Анализ + Препорък
+st.markdown("**Качете снимка → Анализ + Препоръки според Вашето здраве**")
+
+# ====================== БАЗА ДАННИ ======================
+harmful_dict = {
+    "E250": "Натриев нитрит", 
+    "E251": "Натриев нитрат",
+    "E621": "Мононатриев глутамат (MSG)",
+    "E407": "Карагенан", 
     "E450": "Дифосфати", 
     "E452": "Полифосфати",
     "E211": "Натриев бензоат",
@@ -39,7 +39,7 @@ keywords_harmful = {
     "глутен": "Глутен"
 }
 
-# ====================== ПРЕПОРЪКИ ПО ЗАБОЛЯВАНИЯ ======================
+# ====================== ПРЕПОРЪКИ ======================
 condition_recommendations = {
     "Диабет": "Избягвайте подсладители, захар и глюкозен сироп. Предпочитайте нискогликемични продукти.",
     "Високо кръвно налягане / Сърдечни проблеми": "Ограничете натрий, нитрити и преработени меса.",
@@ -66,14 +66,12 @@ def extract_text(image):
 
 def find_harmful(text):
     found = []
-    # Търсене на E-номера
     e_matches = re.findall(r'e?\s*(\d{3,4}[a-z]?)', text)
     for e in e_matches:
         e_code = "E" + e.upper() if not e.upper().startswith("E") else e.upper()
         if e_code in harmful_dict:
             found.append((e_code, harmful_dict[e_code]))
     
-    # Търсене по ключови думи
     for kw, name in keywords_harmful.items():
         if kw in text:
             found.append((name, "Потенциално проблемна"))
@@ -86,7 +84,7 @@ selected_conditions = st.multiselect(
     "Изберете всички състояния, които се отнасят за Вас:",
     options=list(condition_recommendations.keys()),
     default=[],
-    help="Можете да изберете повече от едно заболяване"
+    help="Можете да изберете повече от едно"
 )
 
 st.markdown("---")
@@ -104,7 +102,8 @@ elif uploaded:
     image = Image.open(uploaded)
 
 if image:
-    st.image(image, caption="Изображение за анализ", use_column_width=True)
+    # Поправено: use_column_width → width
+    st.image(image, caption="Изображение за анализ", width=700)
     
     if st.button("🔍 Анализирай етикета и дай препоръки", 
                  type="primary", 
@@ -116,7 +115,6 @@ if image:
             
             harmful = find_harmful(text)
             
-            # === РЕЗУЛТАТИ ===
             st.subheader("📝 Разпознат текст")
             st.write(text[:800] + "..." if len(text) > 800 else text)
             
@@ -127,9 +125,7 @@ if image:
             else:
                 st.success("Не са открити рискови добавки от нашата база.")
 
-            # === ПЕРСОНАЛИЗИРАНИ ПРЕПОРЪКИ ===
             st.subheader("🧠 Персонализирани препоръки")
-            
             if selected_conditions:
                 st.info(f"**Избрани състояния:** {', '.join(selected_conditions)}")
             
@@ -137,11 +133,11 @@ if image:
                 st.warning(f"**{cond}**: {condition_recommendations[cond]}")
             
             if harmful:
-                st.info("**Съвет:** По-добре ограничете или заменете този продукт с по-натурален.")
+                st.info("**Съвет:** По-добре ограничете или заменете този продукт.")
             else:
                 st.success("Продуктът изглежда относително безопасен.")
 
-            # Download report
+            # Отчет
             report = f"""AI Анализ на хранителен етикет
 
 Избрани заболявания: {selected_conditions}
@@ -158,3 +154,5 @@ if image:
 with st.expander("📚 Списък с рискови добавки"):
     for k, v in harmful_dict.items():
         st.markdown(f"**{k}** — {v}")
+ 
+ 
