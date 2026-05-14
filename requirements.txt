@@ -1,7 +1,5 @@
 streamlit
 easyocr
-pillow
+Pillow
 numpy
-torch
-torchvision
-torchaudio
+deep-translator
