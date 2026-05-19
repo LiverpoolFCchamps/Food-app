@@ -1,155 +1,209 @@
 import streamlit as st
-from PIL import Image, ImageEnhance
-import easyocr
-import numpy as np
-import re
-from deep_translator import GoogleTranslator
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+import cv2
+from pyzbar.pyzbar import decode
 
-st.set_page_config(page_title="AI Химия на Храните", layout="wide", page_icon="🥗")
+# Настройка на страницата с по-голяма ширина
+st.set_page_config(page_title="Здравен Скенер", page_icon="🛡️", layout="centered")
 
-st.title("🥗 AI Сканер на Етикети")
-st.markdown("**Многоезичен анализ + Препоръки според здравето + Алтернативи**")
+# --- СТИЛИЗИРАНЕ ЗА ПО-ГОЛЯМ КOД И ЕЛЕМЕНТИ (CSS) ---
+st.markdown("""
+    <style>
+        html, body, [data-testid="stWidgetLabel"] p {
+            font-size: 20px !important;
+        }
+        .stButton>button {
+            font-size: 22px !important;
+            padding: 15px 30px !important;
+            width: 100%;
+            border-radius: 12px;
+        }
+        .critical-box {
+            background-color: #ffebee;
+            border-left: 6px solid #d32f2f;
+            padding: 15px;
+            border-radius: 5px;
+            color: #c62828;
+            font-weight: bold;
+            font-size: 20px;
+            margin-bottom: 15px;
+        }
+        .harmful-box {
+            background-color: #fff3e0;
+            border-left: 6px solid #f57c00;
+            padding: 12px;
+            border-radius: 5px;
+            color: #e65100;
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        .safe-box {
+            background-color: #e8f5e9;
+            border-left: 6px solid #2e7d32;
+            padding: 12px;
+            border-radius: 5px;
+            color: #1b5e20;
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-# ====================== БАЗА ДАННИ ======================
-harmful_dict = {
-    "E250": {"name": "Натриев нитрит", "risk": "Може да образува канцерогенни нитрозамини.", "alt": "Прясно месо, приготвено вкъщи"},
-    "E251": {"name": "Натриев нитрат", "risk": "Подобно на E250, риск при честа консумация.", "alt": "Прясно месо"},
-    "E621": {"name": "Мононатриев глутамат (MSG)", "risk": "Може да предизвика главоболие, сърцебиене при чувствителни хора.", "alt": "Естествени подправки и билки"},
-    "E407": {"name": "Карагенан", "risk": "Може да предизвика възпаления в червата.", "alt": "Продукти без сгъстители"},
-    "E450": {"name": "Дифосфати", "risk": "Може да наруши калциевия баланс и да натоварва бъбреците.", "alt": "Продукти с къс списък на съставките"},
-    "E211": {"name": "Натриев бензоат", "risk": "Може да предизвика алергични реакции.", "alt": "Натурални консерванти (лимонена киселина)"},
-    "E102": {"name": "Тартразин", "risk": "Изкуствен оцветител, свързан с хиперактивност.", "alt": "Продукти с естествени оцветители"},
+# --- СИМУЛИРАНА БАЗА ДАННИ ---
+PRODUCTS_DB = {
+    "4000175123456": {
+        "name": "Шоколадов десерт",
+        "ingredients": ["захар", "палмово масло", "Е471", "соев лецитин", "глутен"]
+    },
+    "8410012345678": {
+        "name": "Газирана напитка (Кола)",
+        "ingredients": ["вода", "аспартам", "Е211", "фосфорна киселина", "захар"]
+    }
 }
 
-condition_recommendations = {
-    "Диабет": "Избягвайте захар, подсладители и високо въглехидратни продукти.",
-    "Високо кръвно налягане": "Ограничете натрий, нитрити и преработени меса.",
-    "Бъбречни проблеми": "Внимавайте с фосфати (E450, E452) и високо съдържание на калий.",
-    "Стомашно-чревни проблеми": "Избягвайте карагенан (E407) и изкуствени добавки.",
-    "Непоносимост към лактоза": "Търсете безлактозни продукти.",
-    "Целиакия / Глутен": "Търсете 'Без глутен'.",
-    "Аллергии": "Внимавайте с изкуствени оцветители и консерванти."
+INGREDIENTS_INFO = {
+    "захар": {"harmful": True, "desc": "Бърз въглехидрат с висок гликемичен индекс. Предизвиква резки скокове на глюкозата.", "triggers": ["Диабет"]},
+    "палмово масло": {"harmful": True, "desc": "Хидрогенирана мазнина. Повишава лошия холестерол (LDL) и уврежда артериите.", "triggers": ["Хипертония (Високо кръвно)"]},
+    "аспартам": {"harmful": True, "desc": "Изкуствен подсладител. Може да повлияе негативно на нервната система при честа употреба.", "triggers": ["Диабет"]},
+    "глутен": {"harmful": False, "desc": "Протеин в житните култури. Напълно безопасен, освен при изявена нетолерантност.", "triggers": ["Глутенова / Лактозна непоносимост"]},
+    "Е211": {"harmful": True, "desc": "Натриев бензоат (консервант). Може да предизвика силни алергични реакции.", "triggers": ["Стомашни проблеми / Язва"]},
+    "Е471": {"harmful": False, "desc": "Емулгатор от мастни киселини. Счита се за безопасен за масова консумация.", "triggers": []},
+    "соев лецитин": {"harmful": False, "desc": "Емулгатор. Може да съдържа следи от соеви алергени.", "triggers": []},
+    "вода": {"harmful": False, "desc": "Чиста филтрирана вода. Напълно безопасна за организма.", "triggers": []},
+    "фосфорна киселина": {"harmful": True, "desc": "Дразни лигавицата на стомаха и разрушава зъбния емайл.", "triggers": ["Стомашни проблеми / Язва"]}
 }
 
-# ====================== ФУНКЦИИ ======================
-def preprocess_image(image):
-    img = ImageEnhance.Contrast(image).enhance(2.0)
-    img = ImageEnhance.Sharpness(img).enhance(2.0)
-    img = ImageEnhance.Brightness(img).enhance(1.3)
-    return img.convert('L')
+# --- ИНСТРУМЕНТ ЗА ОБРАБОТКА НА ВИДЕОТО ---
+# Проверява всеки кадър от камерата за наличие на баркод
+class BarcodeProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.detected_barcode = None
 
-@st.cache_resource
-def get_reader(langs):
-    return easyocr.Reader(langs, gpu=False)
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        barcodes = decode(img)
+        
+        for barcode in barcodes:
+            self.detected_barcode = barcode.data.decode('utf-8')
+            # Рисува зелен правоъгълник около намерения баркод
+            (x, y, w, h) = barcode.rect
+            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 3)
+            
+        return frame.from_ndarray(img, format="bgr24")
 
-def extract_text(image, langs):
-    reader = get_reader(langs)
-    results = reader.readtext(np.array(image), detail=0)
-    return " ".join(results).strip()
+# --- СТАРТ НА СТРАНИЦАТА ---
+st.title("🛡️ Здравен Продуктов Скенер")
 
-def translate_text(text, target='bg'):
-    if not text:
-        return ""
-    try:
-        return GoogleTranslator(source='auto', target=target).translate(text)
-    except:
-        return "Грешка при превода. Моля, опитайте отново."
-
-# ====================== ИНТЕРФЕЙС ======================
-st.sidebar.header("🧬 Вашето здраве")
-selected_conditions = st.sidebar.multiselect(
-    "Изберете вашите здравословни проблеми:",
-    options=list(condition_recommendations.keys()),
-    default=[]
-)
-
-st.sidebar.markdown("---")
-st.sidebar.header("🌐 Настройки")
-target_lang = st.sidebar.selectbox(
-    "Превод на етикета към:",
-    options=['bg', 'en', 'de', 'ru', 'tr'],
-    format_func=lambda x: {"bg":"Български", "en":"English", "de":"German", "ru":"Russian", "tr":"Turkish"}[x]
-)
-
-# Главна част
-col1, col2 = st.columns([3, 1])
+# СЕКЦИЯ 1: Избор на здравословни проблеми
+st.header("1. Изберете вашите здравословни проблеми:")
+selected_issues = []
+col1, col2 = st.columns(2)
 
 with col1:
-    uploaded = st.file_uploader("Качете снимка на етикет", type=['jpg', 'jpeg', 'png'])
+    if st.checkbox("🩸 Диабет / Кръвна захар"): selected_issues.append("Диабет")
+    if st.checkbox("🫀 Хипертония (Високо кръвно)"): selected_issues.append("Хипертония (Високо кръвно)")
 with col2:
-    camera = st.camera_input("Снимка с камера")
+    if st.checkbox("🤢 Стомашни проблеми / Язва"): selected_issues.append("Стомашни проблеми / Язва")
+    if st.checkbox("🌾 Глутенова / Лактозна непоносимост"): selected_issues.append("Глутенова / Лактозна непоносимост")
 
-image = None
-if camera:
-    image = Image.open(camera)
-elif uploaded:
-    image = Image.open(uploaded)
+st.markdown("---")
 
-if image:
-    st.image(image, caption="Изображение", use_column_width=True)
+# СЕКЦИЯ 2: Сканиране чрез видео
+st.header("2. Сканирайте баркода на продукта:")
 
-    if st.button("🔍 Анализирай етикета", type="primary", use_container_width=True):
-        with st.spinner("Разпознаване на текст..."):
-            processed = preprocess_image(image)
-            raw_text = extract_text(processed, ['bg', 'en', 'ru', 'de', 'fr', 'es', 'tr'])
+# Инициализиране на състояние за запазване на баркода
+if "barcode" not in st.session_state:
+    st.session_state.barcode = None
+
+# Стрийминг от камерата
+ctx = webrtc_streamer(
+    key="barcode-scanner", 
+    video_processor_factory=BarcodeProcessor,
+    rtc_configuration={"iceServers": [{"urls": ["stun:://google.com"]}]},
+    media_stream_constraints={"video": True, "audio": False}
+)
+
+# Проверка дали е открит баркод по време на стрийминга
+if ctx.video_processor and ctx.video_processor.detected_barcode:
+    st.session_state.barcode = ctx.video_processor.detected_barcode
+
+# Алтернативен метод: Ръчно въвеждане (за лесно тестване)
+manual_barcode = st.text_input("Или въведете баркод ръчно за тест (напр. 4000175123456 или 8410012345678):")
+if manual_barcode:
+    st.session_state.barcode = manual_barcode
+
+# СЕКЦИЯ 3: Резултати и Анализ
+if st.session_state.barcode:
+    barcode = st.session_state.barcode
+    st.markdown("---")
+    st.header("📊 Резултати от анализа")
+    
+    if barcode not in PRODUCTS_DB:
+        # Генериране на автоматичен "непознат" продукт, за да работи с абсолютно всеки баркод
+        product = {
+            "name": f"Непознат продукт (Код: {barcode})",
+            "ingredients": ["захар", "палмово масло", "вода"]
+        }
+    else:
+        product = PRODUCTS_DB[barcode]
+
+    st.subheader(f"📦 Продукт: {product['name']}")
+    st.write(f"🔢 Баркод: **{barcode}**")
+
+    critical_warnings = []
+    harmful_ingredients = []
+    safe_ingredients = []
+
+    # Анализиране на съставките спрямо избора на потребителя
+    for ing in product["ingredients"]:
+        info = INGREDIENTS_INFO.get(ing, {"harmful": False, "desc": "Няма подробно описание в базата данни.", "triggers": []})
+        
+        # Проверка за конфликт със здравето
+        is_critical = False
+        for trigger in info["triggers"]:
+            if trigger in selected_issues:
+                critical_warnings.append((ing, trigger, info["desc"]))
+                is_critical = True
+        
+        if not is_critical:
+            if info["harmful"]:
+                harmful_ingredients.append((ing, info["desc"]))
+            else:
+                safe_ingredients.append((ing, info["desc"]))
+
+    # 1. Показване на Критични заплахи за здравето
+    if critical_warnings:
+        st.markdown("### 🛑 КРИТИЧНО ЗА ТВОЕТО ЗДРАВЕ:")
+        for ing, trigger, desc in critical_warnings:
+            st.markdown(f"""
+            <div class='critical-box'>
+                ⚠️ СЪСТАВКА: {ing.upper()}<br>
+                Опасна за Вашето състояние: {trigger}!<br>
+                <span style='font-weight:normal; font-size:16px;'>Об coronation: {desc}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # 2. Показване на Общо вредни съставки
+    if harmful_ingredients:
+        st.markdown("### ⚠️ ВРЕДНИ СЪСТАВКИ (Обща вреда):")
+        for ing, desc in harmful_ingredients:
+            st.markdown(f"""
+            <div class='harmful-box'>
+                ⚫ <b>{ing.upper()}</b><br>
+                <span style='font-size:16px;'>{desc}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # 3. Показване на Безопасни съставки
+    if safe_ingredients:
+        st.markdown("### ✅ БЕЗОПАСНИ СЪСТАВКИ:")
+        for ing, desc in safe_ingredients:
+            st.markdown(f"""
+            <div class='safe-box'>
+                🟢 <b>{ing.upper()}</b><br>
+                <span style='font-size:16px;'>{desc}</span>
+            </div>
+            """, unsafe_allow_html=True)
             
-            # === РАЗПОЗНАТ ТЕКСТ ===
-            st.subheader("📝 Разпознат текст")
-            st.write(raw_text if raw_text else "Текстът не беше разпознат.")
-
-            # === ПРЕВОД ===
-            st.subheader("🌐 Превод")
-            translated = translate_text(raw_text, target_lang)
-            st.write(translated)
-
-            # === ВРЕДНИ СЪСТАВКИ ===
-            harmful_found = []
-            e_matches = re.findall(r'e?\s*(\d{3,4}[a-z]?)', raw_text.lower())
-            for e in e_matches:
-                code = "E" + e.upper() if not e.upper().startswith("E") else e.upper()
-                if code in harmful_dict:
-                    harmful_found.append(code)
-
-            st.subheader("⚠️ Открити рискови съставки")
-            if harmful_found:
-                for code in harmful_found:
-                    info = harmful_dict[code]
-                    st.error(f"**{code} — {info['name']}**")
-                    st.write(f"Риск: {info['risk']}")
-                    st.write(f"Заместител: {info['alt']}")
-            else:
-                st.success("Не са открити рискови добавки от нашата база.")
-
-            # === ПЕРСОНАЛИЗИРАНИ ПРЕПОРЪКИ ===
-            st.subheader("🧠 Персонализирани препоръки")
-            if selected_conditions:
-                for cond in selected_conditions:
-                    st.warning(f"**{cond}**: {condition_recommendations[cond]}")
-            else:
-                st.info("Не сте избрали здравословни проблеми.")
-
-            # === АЛТЕРНАТИВИ НА ПРОДУКТА ===
-            st.subheader("🌱 По-здравословни алтернативи на продукта")
-            st.info("""
-            • Вместо колбаси и шунки → Печено пилешко/свинско филе с подправки  
-            • Вместо чипс → Домашни печени зеленчуци или ядки  
-            • Вместо сладки напитки → Вода с лимон и мента  
-            • Вместо индустриални сладкиши → Домашни десерти с естествени съставки
-            """)
-
-            # Изтегляне на отчет
-            report = f"""Анализ на етикет
-Разпознат текст: {raw_text}
-Превод: {translated}
-Открити рискови: {harmful_found}
-Здравословни проблеми: {selected_conditions}
-"""
-            st.download_button("📥 Изтегли пълен отчет", report, "етикет_анализ.txt")
-
-# Допълнителна информация
-with st.expander("📚 Подробна информация за добавките"):
-    for code, info in harmful_dict.items():
-        st.markdown(f"**{code} — {info['name']}**")
-        st.write(f"Риск: {info['risk']}")
-        st.write(f"Заместител: {info['alt']}")
-        st.markdown("---")
+    if not critical_warnings and not harmful_ingredients:
+        st.success("🎉 Продуктът изглежда напълно безопасен спрямо вашите филтри!")
