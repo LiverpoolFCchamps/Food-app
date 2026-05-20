@@ -1,7 +1,8 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import cv2
 from pyzbar.pyzbar import decode
+import queue
 
 # Настройка на страницата с по-голяма ширина
 st.set_page_config(page_title="Здравен Скенер", page_icon="🛡️", layout="centered")
@@ -73,23 +74,22 @@ INGREDIENTS_INFO = {
     "фосфорна киселина": {"harmful": True, "desc": "Дразни лигавицата на стомаха и разрушава зъбния емайл.", "triggers": ["Стомашни проблеми / Язва"]}
 }
 
-# --- ИНСТРУМЕНТ ЗА ОБРАБОТКА НА ВИДЕОТО ---
-# Проверява всеки кадър от камерата за наличие на баркод
-class BarcodeProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.detected_barcode = None
+# Използваме сигурна опашка (Queue) за прехвърляне на данните от камерата към Streamlit
+result_queue = queue.Queue()
 
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        barcodes = decode(img)
+def video_frame_callback(frame):
+    img = frame.to_ndarray(format="bgr24")
+    barcodes = decode(img)
+    
+    for barcode in barcodes:
+        code_str = barcode.data.decode('utf-8')
+        # Когато открием баркод, го пращаме в опашката
+        result_queue.put(code_str)
+        # Рисуваме рамка
+        (x, y, w, h) = barcode.rect
+        cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 3)
         
-        for barcode in barcodes:
-            self.detected_barcode = barcode.data.decode('utf-8')
-            # Рисува зелен правоъгълник около намерения баркод
-            (x, y, w, h) = barcode.rect
-            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 3)
-            
-        return frame.from_ndarray(img, format="bgr24")
+    return frame.from_ndarray(img, format="bgr24")
 
 # --- СТАРТ НА СТРАНИЦАТА ---
 st.title("🛡️ Здравен Продуктов Скенер")
@@ -111,54 +111,51 @@ st.markdown("---")
 # СЕКЦИЯ 2: Сканиране чрез видео
 st.header("2. Сканирайте баркода на продукта:")
 
-# Инициализиране на състояние за запазване на баркода
-if "barcode" not in st.session_state:
-    st.session_state.barcode = None
-
-# Стрийминг от камерата
-ctx = webrtc_streamer(
+# Сигурно стартиране на уеб камерата с callback функция
+webrtc_streamer(
     key="barcode-scanner", 
-    video_processor_factory=BarcodeProcessor,
+    mode=WebRtcMode.SENDRECV,
+    video_frame_callback=video_frame_callback,
     rtc_configuration={"iceServers": [{"urls": ["stun:://google.com"]}]},
     media_stream_constraints={"video": True, "audio": False}
 )
 
-# Проверка дали е открит баркод по време на стрийминга
-if ctx.video_processor and ctx.video_processor.detected_barcode:
-    st.session_state.barcode = ctx.video_processor.detected_barcode
+# Проверяваме дали в опашката има пристигнал баркод от камерата
+scanned_barcode = None
+try:
+    scanned_barcode = result_queue.get_nowait()
+except queue.Empty:
+    scanned_barcode = None
 
-# Алтернативен метод: Ръчно въвеждане (за лесно тестване)
+# Алтернативен метод: Ръчно въвеждане (за лесно тестване, ако камерата няма фокус)
 manual_barcode = st.text_input("Или въведете баркод ръчно за тест (напр. 4000175123456 или 8410012345678):")
-if manual_barcode:
-    st.session_state.barcode = manual_barcode
+
+# Избираме кой баркод да използваме
+final_barcode = manual_barcode if manual_barcode else scanned_barcode
 
 # СЕКЦИЯ 3: Резултати и Анализ
-if st.session_state.barcode:
-    barcode = st.session_state.barcode
+if final_barcode:
     st.markdown("---")
     st.header("📊 Резултати от анализа")
     
-    if barcode not in PRODUCTS_DB:
-        # Генериране на автоматичен "непознат" продукт, за да работи с абсолютно всеки баркод
+    if final_barcode not in PRODUCTS_DB:
         product = {
-            "name": f"Непознат продукт (Код: {barcode})",
-            "ingredients": ["захар", "палмово масло", "вода"]
+            "name": f"Непознат продукт (Код: {final_barcode})",
+            "ingredients": ["захар", "палмово масло", "вода", "фосфорна киселина"]
         }
     else:
-        product = PRODUCTS_DB[barcode]
+        product = PRODUCTS_DB[final_barcode]
 
     st.subheader(f"📦 Продукт: {product['name']}")
-    st.write(f"🔢 Баркод: **{barcode}**")
+    st.write(f"🔢 Баркод: **{final_barcode}**")
 
     critical_warnings = []
     harmful_ingredients = []
     safe_ingredients = []
 
-    # Анализиране на съставките спрямо избора на потребителя
     for ing in product["ingredients"]:
         info = INGREDIENTS_INFO.get(ing, {"harmful": False, "desc": "Няма подробно описание в базата данни.", "triggers": []})
         
-        # Проверка за конфликт със здравето
         is_critical = False
         for trigger in info["triggers"]:
             if trigger in selected_issues:
@@ -171,7 +168,7 @@ if st.session_state.barcode:
             else:
                 safe_ingredients.append((ing, info["desc"]))
 
-    # 1. Показване на Критични заплахи за здравето
+    # 1. Критични заплахи
     if critical_warnings:
         st.markdown("### 🛑 КРИТИЧНО ЗА ТВОЕТО ЗДРАВЕ:")
         for ing, trigger, desc in critical_warnings:
@@ -179,11 +176,11 @@ if st.session_state.barcode:
             <div class='critical-box'>
                 ⚠️ СЪСТАВКА: {ing.upper()}<br>
                 Опасна за Вашето състояние: {trigger}!<br>
-                <span style='font-weight:normal; font-size:16px;'>Об coronation: {desc}</span>
+                <span style='font-weight:normal; font-size:16px;'>Описание: {desc}</span>
             </div>
             """, unsafe_allow_html=True)
 
-    # 2. Показване на Общо вредни съставки
+    # 2. Вредни съставки
     if harmful_ingredients:
         st.markdown("### ⚠️ ВРЕДНИ СЪСТАВКИ (Обща вреда):")
         for ing, desc in harmful_ingredients:
@@ -194,7 +191,7 @@ if st.session_state.barcode:
             </div>
             """, unsafe_allow_html=True)
 
-    # 3. Показване на Безопасни съставки
+    # 3. Безопасни съставки
     if safe_ingredients:
         st.markdown("### ✅ БЕЗОПАСНИ СЪСТАВКИ:")
         for ing, desc in safe_ingredients:
@@ -204,6 +201,3 @@ if st.session_state.barcode:
                 <span style='font-size:16px;'>{desc}</span>
             </div>
             """, unsafe_allow_html=True)
-            
-    if not critical_warnings and not harmful_ingredients:
-        st.success("🎉 Продуктът изглежда напълно безопасен спрямо вашите филтри!")
