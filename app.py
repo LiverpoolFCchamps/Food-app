@@ -112,13 +112,7 @@ st.markdown("---")
 st.header("2. Сканирайте баркода на продукта:")
 
 # Сигурно стартиране на уеб камерата с callback функция
-webrtc_streamer(
-    key="barcode-scanner", 
-    mode=WebRtcMode.SENDRECV,
-    video_frame_callback=video_frame_callback,
-    rtc_configuration={"iceServers": [{"urls": ["stun:://google.com"]}]},
-    media_stream_constraints={"video": True, "audio": False}
-)
+rtc_configuration={"iceServers": [{"urls": ["stun:google.com:19302"]}]},
 
 # Проверяваме дали в опашката има пристигнал баркод от камерата
 scanned_barcode = None
