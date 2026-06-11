@@ -139,9 +139,8 @@ if option == "Камера (Снимка на Баркод)":
     st.info("📸 Направете ясна снимка на баркода. Дръжте опаковката неподвижно и се уверете, че има достатъчно светлина.")
     image_data = st.camera_input("Сканирай баркод")
     
-    if image_data:
-        try:
-            img = Image.open(image_data)
-            opencv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-            barcodes = pyzbar.decode(opencv_img)
-            
+    if image_data is not None:
+        img = Image.open(image_data)
+        opencv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        barcodes = pyzbar.decode(opencv_img)
+        
