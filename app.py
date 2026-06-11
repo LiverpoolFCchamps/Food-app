@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import cv2
 from pyzbar.pyzbar import decode
 import queue
@@ -74,8 +74,12 @@ INGREDIENTS_INFO = {
     "фосфорна киселина": {"harmful": True, "desc": "Дразни лигавицата на стомаха и разрушава зъбния емайл.", "triggers": ["Стомашни проблеми / Язва"]}
 }
 
-# Използваме сигурна опашка (Queue) за прехвърляне на данните от камерата към Streamlit
-result_queue = queue.Queue()
+# Опашка за прехвърляне на данни от видео нишката към Streamlit
+@st.cache_resource
+def get_result_queue():
+    return queue.Queue()
+
+result_queue = get_result_queue()
 
 def video_frame_callback(frame):
     img = frame.to_ndarray(format="bgr24")
@@ -83,9 +87,8 @@ def video_frame_callback(frame):
     
     for barcode in barcodes:
         code_str = barcode.data.decode('utf-8')
-        # Когато открием баркод, го пращаме в опашката
         result_queue.put(code_str)
-        # Рисуваме рамка
+        # Рисуваме зелена рамка около баркода на видеото
         (x, y, w, h) = barcode.rect
         cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 3)
         
@@ -108,30 +111,50 @@ with col2:
 
 st.markdown("---")
 
-# СЕКЦИЯ 2: Сканиране чрез видео
-st.header("2. Сканирайте баркода на продукта:")
+# СЕКЦИЯ 2: Входни данни (Сканиране ИЛИ Ръчно въвеждане)
+st.header("2. Сканирайте или въведете баркод:")
 
-# Сигурно стартиране на уеб камерата с callback функция
-rtc_configuration={"iceServers": [{"urls": ["stun:google.com:19302"]}]},
+# Създаваме две колони: една за камерата и една за ръчното въвеждане
+col_cam, col_manual = st.columns([2, 1])
 
-# Проверяваме дали в опашката има пристигнал баркод от камерата
+with col_cam:
+    st.subheader("📷 Сканирай с камера")
+    rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+    webrtc_streamer(
+        key="barcode-scanner",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=rtc_config,
+        video_frame_callback=video_frame_callback,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
+
+# Проверяваме дали има уловен баркод от камерата
 scanned_barcode = None
 try:
     scanned_barcode = result_queue.get_nowait()
 except queue.Empty:
     scanned_barcode = None
 
-# Алтернативен метод: Ръчно въвеждане (за лесно тестване, ако камерата няма фокус)
-manual_barcode = st.text_input("Или въведете баркод ръчно за тест (напр. 4000175123456 или 8410012345678):")
+with col_manual:
+    st.subheader("⌨️ Ръчно въвеждане")
+    manual_barcode = st.text_input("Въведи код тук:")
 
-# Избираме кой баркод да използваме
-final_barcode = manual_barcode if manual_barcode else scanned_barcode
+# Магията: Избираме активния баркод (ръчният е с приоритет, ако потребителят пише в момента)
+final_barcode = manual_barcode.strip() if manual_barcode else scanned_barcode
+
+# Бутон за изчистване, за да преминем лесно на следващ продукт
+if final_barcode:
+    if st.button("🔄 Изчисти и сканирай нов продукт"):
+        result_queue.queue.clear()
+        st.rerun()
 
 # СЕКЦИЯ 3: Резултати и Анализ
 if final_barcode:
     st.markdown("---")
     st.header("📊 Резултати от анализа")
     
+    # Ако баркодът го няма в базата, симулираме тестов продукт, за да видиш как работи
     if final_barcode not in PRODUCTS_DB:
         product = {
             "name": f"Непознат продукт (Код: {final_barcode})",
