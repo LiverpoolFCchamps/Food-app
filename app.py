@@ -39,7 +39,10 @@ def analyze_ingredients(text):
             st.info(f"❓ **[{code}]** Разрешена съставка в ЕС, но липсва в базата данни на приложението.")
 
 def fetch_product(barcode):
-    url = f"https://openfoodfacts.org{barcode}.json"
+    clean_barcode = str(barcode).strip()
+    # Фиксиран точен URL адрес с правилна наклонена черта
+    url = f"https://openfoodfacts.org{clean_barcode}.json"
+    
     try:
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
@@ -54,7 +57,7 @@ def fetch_product(barcode):
             else:
                 st.error("❌ Продуктът не е намерен в глобалната база данни.")
         else:
-            st.error("❌ Грешка при връзката с базата данни за продукти.")
+            st.error(f"❌ Грешка при връзката с базата данни (Статус код: {response.status_code}).")
     except Exception as e:
         st.error(f"Грешка при връзка с API: {e}")
 
@@ -88,3 +91,4 @@ elif option == "Директен текст от етикет":
     text_input = st.text_area("Поставете текста със съставките тук (напр. съдържа Е250 и Е300):")
     if st.button("Анализирай текст") and text_input:
         analyze_ingredients(text_input)
+
