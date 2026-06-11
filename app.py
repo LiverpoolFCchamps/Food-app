@@ -6,7 +6,6 @@ import re
 from PIL import Image
 import numpy as np
 
-
 # Локална база данни с Е-номера
 E_ADDITIVES = {
     "E100": {"name": "Куркумин", "group": "🟢 Зелена (Безопасна)", "desc": "Естествен жълт оцветител от куркума."},
@@ -54,6 +53,8 @@ def fetch_product(barcode):
                 analyze_ingredients(ingredients)
             else:
                 st.error("❌ Продуктът не е намерен в глобалната база данни.")
+        else:
+            st.error("❌ Грешка при връзката с базата данни за продукти.")
     except Exception as e:
         st.error(f"Грешка при връзка с API: {e}")
 
@@ -63,8 +64,8 @@ st.title("🛡️ Скенер за вредни съставки (Е-номер
 option = st.radio("Изберете метод:", ["Камера (Баркод)", "Ръчен баркод", "Директен текст от етикет"])
 
 if option == "Камера (Баркод)":
-    st.info("Насочете баркода на продукта към камерата.")
-    image_data = camera_input_live()
+    st.info("Направете снимка на баркода с камерата си. Уверете се, че е добре осветен и на фокус.")
+    image_data = st.camera_input("Снимай баркод")
     
     if image_data:
         img = Image.open(image_data)
@@ -72,11 +73,11 @@ if option == "Камера (Баркод)":
         barcodes = pyzbar.decode(opencv_img)
         
         if barcodes:
-            barcode_value = barcodes[0].data.decode("utf-8")
+            barcode_value = barcodes.data.decode("utf-8")
             st.success(f"Успешно разчетен баркод: {barcode_value}")
             fetch_product(barcode_value)
         else:
-            st.caption("Търсене на баркод в кадъра...")
+            st.error("❌ Неуспешно разчитане. Моля, приближете или отдалечете баркода и опитайте с нова снимка.")
 
 elif option == "Ръчен баркод":
     barcode_input = st.text_input("Въведете цифрите на баркода:")
