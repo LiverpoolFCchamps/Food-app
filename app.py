@@ -25,7 +25,7 @@ E_ADDITIVES = {
     "E415": {"name": "Ксантанова гума", "group": "🟢 Зелена (Безопасна)", "desc": "Натурален полизахарид, дебело захарен стабилизатор от ферментация."},
     "E440": {"name": "Пектин", "group": "🟢 Зелена (Безопасна)", "desc": "Растителен желиращ агент от ябълки и цитруси. Полезен за храносмилането."},
     "E500": {"name": "Натриеви карбонати", "group": "🟢 Зелена (Безопасна)", "desc": "Обикновена сода за хляб. Напълно безопасна."},
-    "E960": {"name": "Стевиол гликозиди", "group": "🟢 Зелена (Безопасна)", "desc": "Естествен подсладител от листата на билката стевия."},
+    "E960": {"name": "Steviol glycosides", "group": "🟢 Зелена (Безопасна)", "desc": "Естествен подсладител от листата на билката стевия."},
 
     # --- 🟡 ЖЪЛТА КАТЕГОРИЯ: УМЕРЕНО ВРЕДНИ / ВНИМАНИЕ ---
     "E202": {"name": "Калиев сорбат", "group": "🟡 Жълта (Умерено вредна)", "desc": "Консервант срещу мухъл. Безопасен за повечето хора, но в големи количества дразни кожата."},
@@ -56,10 +56,7 @@ def analyze_ingredients(text):
         st.warning("⚠️ Текстът на съставките е празен.")
         return
 
-    # Извличане с Регулярен израз за Е-номера (хваща Е100, Е 300, е250 както на BG, така и на EN)
     found_codes = re.findall(r'[EeЕе]\s*\d{3,4}[a-zA-Zа-яА-Я]?', text)
-    
-    # Нормализиране: премахване на интервали, превръщане в главни букви и превод на кирилското 'Е' към латинско 'E'
     cleaned_codes = list(set([code.replace(' ', '').upper().replace('Е', 'E') for code in found_codes]))
     
     if not cleaned_codes:
@@ -68,7 +65,6 @@ def analyze_ingredients(text):
 
     st.markdown(f"### 🔍 Открити добавки ({len(cleaned_codes)} бр.):")
     
-    # Сортиране по вредност (първо показва Червените, после Жълтите, накрая Зелените)
     def sorting_key(code):
         if code in E_ADDITIVES:
             group = E_ADDITIVES[code]["group"]
@@ -98,8 +94,7 @@ def fetch_product(barcode):
         st.error("❌ Невалиден баркод! Моля, въведете само цифри.")
         return
 
-    # Задължителен и 100% точен URL адрес
-    url = f"https://world.openfoodfacts.org/api/v0/product/{clean_barcode}.json"
+    url = f"https://openfoodfacts.org{clean_barcode}.json"
     
     with st.spinner("🔄 Търсене в глобалната база данни..."):
         try:
@@ -111,10 +106,7 @@ def fetch_product(barcode):
                     p_name = product.get('product_name', 'Неизвестна марка / продукт')
                     st.success(f"🛍️ Намерен продукт: **{p_name}**")
                     
-                    # Извличане на съставките като чист текст
                     ingredients = product.get("ingredients_text", "")
-                    
-                    # Алтернативен метод за събиране, ако няма дълъг текст
                     if not ingredients:
                         tags = product.get("ingredients_tags", [])
                         if tags:
@@ -132,10 +124,21 @@ def fetch_product(barcode):
                 st.error(f"❌ Грешка при комуникация със сървъра. Статус код: {response.status_code}")
         except requests.exceptions.Timeout:
             st.error("❌ Връзката отне твърде дълго време (Timeout). Опитайте отново.")
-    except Exception as e:
-        st.error(f"❌ Възникна неочаквана грешка: {e}")
+        except Exception as e:
+            st.error(f"❌ Възникна неочаквана грешка при извличане: {e}")
 
 # --- СТРИЙМЛИТ ПОТРЕБИТЕЛСКИ ИНТЕРФЕЙС ---
 st.title("🛡️ Хранителен Скенер за Е-Номера")
 st.write("Проверете дали храната ви съдържа вредни консерванти, подсладители или оцветители съгласно стандартите на ЕС.")
 
+option = st.radio("Изберете как да проверите продукта:", ["Камера (Снимка на Баркод)", "Ръчно въвеждане на Баркод", "Директно поставяне на Текст"])
+
+st.markdown("---")
+
+if option == "Камера (Снимка на Баркод)":
+    st.info("📸 Направете ясна снимка на баркода. Дръжте опаковката неподвижно и се уверете, че има достатъчно светлина.")
+    image_data = st.camera_input("Сканирай баркод")
+    
+    if image_data:
+        try:
+            img = Image.open(image_data)
