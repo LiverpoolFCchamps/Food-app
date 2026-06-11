@@ -5,7 +5,7 @@ import requests
 import re
 from PIL import Image
 import numpy as np
-from streamlit_camera_input_live import camera_input_live
+
 
 # Локална база данни с Е-номера
 E_ADDITIVES = {
