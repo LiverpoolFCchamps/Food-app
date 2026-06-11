@@ -1,4 +1,6 @@
 streamlit
-streamlit-webrtc
+streamlit-camera-input-live
 pyzbar
+requests
 opencv-python-headless
+pillow
